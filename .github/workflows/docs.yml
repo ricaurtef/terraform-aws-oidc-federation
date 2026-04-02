@@ -1,0 +1,29 @@
+name: Docs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "*.tf"
+      - ".terraform-docs.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Render terraform docs
+        uses: terraform-docs/gh-actions@v1
+        with:
+          working-dir: .
+          output-file: README.md
+          output-method: replace
+          git-push: "true"
+          git-commit-message: "docs: regenerate README"
