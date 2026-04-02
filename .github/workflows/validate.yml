@@ -66,3 +66,4 @@ jobs:
           output-file: README.md
           output-method: replace
           fail-on-diff: "true"
+          terraform-docs-version: "v0.21.0"
