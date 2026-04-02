@@ -8,7 +8,7 @@ jobs:
     name: Terraform fmt + validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Keep in sync with required_version in versions.tf.
       - uses: hashicorp/setup-terraform@v3
@@ -28,7 +28,7 @@ jobs:
     name: TFLint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: terraform-linters/setup-tflint@v4
         with:
@@ -44,7 +44,7 @@ jobs:
     name: Security scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Checkov
         uses: bridgecrewio/checkov-action@v12
@@ -57,7 +57,7 @@ jobs:
     name: Docs check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Verify README is up to date
         uses: terraform-docs/gh-actions@v1
