@@ -16,4 +16,4 @@ security:
 	trivy fs . --scanners secret,misconfig --quiet
 
 docs:
-	terraform-docs .
+	terraform-docs --config .config/terraform-docs.yml .

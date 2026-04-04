@@ -2,135 +2,50 @@
 # AWS IAM OIDC Federation for CI/CD
 
 ![tag](https://img.shields.io/github/v/tag/ricaurtef/terraform-aws-oidc-federation?label=tag&color=fe8019)
-![Terraform](https://img.shields.io/badge/terraform-~%3E1.14-623CE4?logo=terraform&logoColor=white)
-![AWS Provider](https://img.shields.io/badge/aws_provider-~%3E6.27-FF9900?logo=amazonaws&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-83a598)
+![ci](https://img.shields.io/github/actions/workflow/status/ricaurtef/terraform-aws-oidc-federation/validate.yml?label=ci&color=83a598)
+![terraform](https://img.shields.io/badge/terraform-~%3E1.14-623CE4?logo=terraform&logoColor=white)
+![aws provider](https://img.shields.io/badge/aws_provider-~%3E6.27-232F3E?logo=amazonaws&logoColor=white)
 
-Provisions AWS IAM resources to enable OIDC (OpenID Connect) federation between AWS and a CI/CD
-platform. The result is a trust relationship that lets CI/CD jobs exchange a short-lived platform
-token for temporary AWS credentials — with no long-lived access keys to store, rotate, or leak.
+---
 
-## The problem this solves
+Provisions AWS IAM resources to enable OIDC (OpenID Connect) federation between AWS and a CI/CD platform.
+Creates an IAM OIDC identity provider and a scoped assumable IAM role. No policies are attached — callers attach their
+own based on their use case.
 
-Traditional CI/CD pipelines authenticate to AWS with static access keys stored as repository
-secrets. These keys:
+## Architecture
 
-- **Never expire.** Rotation is manual and often skipped.
-- **Have broad blast radius.** A leaked key is valid until someone notices and revokes it.
-- **Accumulate silently.** Keys are created for a pipeline, the pipeline changes, and the key
-  is forgotten but remains active.
+```mermaid
+flowchart LR
+  ci["CI/CD Platform\n(GitHub, GitLab, Bitbucket)"]
+  ci -->|"1. OIDC token (JWT)"| sts
 
-OIDC federation eliminates the key entirely. Each job run gets credentials that expire in at most
-one hour and are scoped to exactly the role you specify.
+  subgraph aws["AWS Account"]
+    sts["STS\nAssumeRoleWithWebIdentity"]
+    oidc["IAM OIDC Provider\n(verifies token signature)"]
+    role["IAM Role\n(scoped trust policy)"]
+  end
 
-## How it works
-
-```
-CI/CD job
-  │
-  ├─ 1. Request OIDC token from platform
-  │      └─ Platform mints a signed JWT with claims about the job
-  │         (repo, branch, workflow, etc.)
-  │
-  ├─ 2. Call sts:AssumeRoleWithWebIdentity with the JWT
-  │      └─ AWS STS verifies the JWT:
-  │            • Signature valid against the registered OIDC provider
-  │            • Audience (aud) matches the expected client ID
-  │            • Subject (sub) satisfies the role's trust policy conditions
-  │
-  └─ 3. Receive temporary credentials (max 1 hour)
-         └─ Use credentials for AWS API calls — they expire automatically
+  sts -->|"2. verify"| oidc
+  oidc -->|"3. validate claims"| role
+  role -->|"4. temporary credentials"| ci
 ```
 
-## Resources created
+## How OIDC federation works
 
-| Resource | Condition | Purpose |
-|---|---|---|
-| `aws_iam_openid_connect_provider` | `create_oidc_provider = true` (default) | Registers the CI/CD platform as a trusted identity provider. AWS uses this to verify JWT signatures. |
-| `aws_iam_role` | Always | The assumable role. Its trust policy allows `sts:AssumeRoleWithWebIdentity` from the registered provider, gated on the claim values you specify. |
+Traditional CI/CD pipelines authenticate to AWS with long-lived access keys stored as secrets. OIDC eliminates those
+credentials entirely:
 
-> **One provider per platform per account.** AWS enforces a uniqueness constraint on OIDC
-> provider URLs. If a provider for the platform already exists in the account, set
-> `create_oidc_provider = false` and pass the existing ARN via `oidc_provider_arn`.
+1. The CI platform mints a short-lived, signed JWT (the OIDC token) for each job.
+2. The job presents that token to AWS STS via `AssumeRoleWithWebIdentity`.
+3. AWS verifies the token's signature against the registered OIDC provider and checks that the claims satisfy the
+   role's trust policy.
+4. STS returns temporary credentials (max 1 hour) scoped to that role.
 
-## Prerequisites
-
-- AWS credentials with permission to create IAM OIDC providers and IAM roles.
-- Terraform `>= 1.14`.
-- A CI/CD platform that issues OIDC tokens (GitHub Actions, GitLab CI >= 15.7,
-  Bitbucket Pipelines).
-
-## Quick start
-
-### GitHub Actions
-
-```hcl
-module "oidc" {
-  source = "github.com/ricaurtef/terraform-aws-oidc-federation"
-
-  platform     = "github"
-  match_values = ["repo:my-org/my-repo:ref:refs/heads/main"]
-}
-```
-
-In your GitHub Actions workflow:
-
-```yaml
-permissions:
-  id-token: write   # required to request the OIDC token
-  contents: read
-
-steps:
-  - uses: aws-actions/configure-aws-credentials@v4
-    with:
-      role-to-assume: <role_arn output>
-      aws-region: us-east-1
-```
-
-### GitLab CI
-
-```hcl
-module "oidc" {
-  source = "github.com/ricaurtef/terraform-aws-oidc-federation"
-
-  platform     = "gitlab"
-  match_values = ["project_path:my-group/my-project:ref_type:branch:ref:main"]
-}
-```
-
-In your `.gitlab-ci.yml`:
-
-```yaml
-assume_role:
-  id_tokens:
-    GITLAB_OIDC_TOKEN:
-      aud: https://gitlab.com
-  script:
-    - >
-      aws sts assume-role-with-web-identity
-      --role-arn <role_arn output>
-      --role-session-name gitlab-ci
-      --web-identity-token "$GITLAB_OIDC_TOKEN"
-```
-
-### Bitbucket Pipelines
-
-```hcl
-module "oidc" {
-  source = "github.com/ricaurtef/terraform-aws-oidc-federation"
-
-  platform     = "bitbucket"
-  match_values = ["{workspace-uuid}:{repo-uuid}:*"]
-}
-```
-
-See [Bitbucket's OIDC documentation](https://support.atlassian.com/bitbucket-cloud/docs/deploy-on-aws-using-bitbucket-pipelines-openid-connect/)
-for how to retrieve workspace and repository UUIDs and call `AssumeRoleWithWebIdentity` from a
-pipeline step.
+No secrets to rotate. No credentials to leak. Compromise is bounded to a single job run.
 
 ## Usage
 
-See the [`examples/`](./examples) directory for complete, working configurations per platform:
+See the [`examples/`](./examples) directory for a working configuration per platform:
 
 - [GitHub Actions](./examples/github)
 - [GitLab CI](./examples/gitlab)
@@ -138,40 +53,42 @@ See the [`examples/`](./examples) directory for complete, working configurations
 
 ### Multiple roles, single provider
 
-When you need multiple IAM roles for the same platform — separate roles for different projects or
-permission levels — create the provider once and reuse it for subsequent calls.
+AWS enforces one OIDC provider per URL per account. When you need multiple IAM roles for the
+same platform (e.g., separate roles for different projects), create the provider once and reuse
+it for subsequent role configurations.
 
 ```hcl
-# First call — creates the OIDC provider and the deploy role.
+# First module call — creates both the OIDC provider and the first role.
 module "oidc_deploy" {
-  source = "github.com/ricaurtef/terraform-aws-oidc-federation"
+  source = "app.terraform.io/my-org/terraform-aws-oidc-federation"
 
-  platform     = "github"
-  match_values = ["repo:my-org/my-repo:ref:refs/heads/main"]
+  platform     = "gitlab"
+  match_values = ["project_path:my-group/deploy-project:ref_type:branch:ref:main"]
 }
 
-# Second call — reuses the existing provider, creates a read-only role.
-module "oidc_readonly" {
-  source = "github.com/ricaurtef/terraform-aws-oidc-federation"
+# Second module call — reuses the existing provider, creates a second role only.
+module "oidc_preview" {
+  source = "app.terraform.io/my-org/terraform-aws-oidc-federation"
 
-  platform             = "github"
-  match_values         = ["repo:my-org/my-repo:*"]
+  platform             = "gitlab"
+  match_values         = ["project_path:my-group/preview-project:ref_type:branch:ref:main"]
   create_oidc_provider = false
   oidc_provider_arn    = module.oidc_deploy.provider_arn
 }
 ```
 
-### Attaching permissions
+### Attaching a custom policy
 
-The module creates the role without any permission policies. Attach policies using the
-`role_name` output:
+This module creates the role and trust relationship only. Attach permissions in the calling configuration using the
+`role_name` output. CI pipelines typically need purpose-built policies rather than AWS managed ones — the exact
+actions and resources will vary by use case.
 
 ```hcl
 module "oidc" {
-  source = "github.com/ricaurtef/terraform-aws-oidc-federation"
+  source = "app.terraform.io/my-org/terraform-aws-oidc-federation"
 
-  platform     = "github"
-  match_values = ["repo:my-org/my-repo:ref:refs/heads/main"]
+  platform     = "gitlab"
+  match_values = ["project_path:my-group/my-project:ref_type:branch:ref:main"]
 }
 
 data "aws_iam_policy_document" "deploy" {
@@ -195,8 +112,8 @@ resource "aws_iam_role_policy_attachment" "deploy" {
 
 ## Scoping access with match_values
 
-The `match_values` list controls which tokens are allowed to assume the role. AWS evaluates them
-with `StringLike`, so `*` wildcards are supported. Start as narrow as your use case allows.
+The `match_values` list controls which tokens are allowed to assume the role. AWS evaluates them with `StringLike`,
+so `*` wildcards are supported. Start as narrow as your use case allows and widen only when necessary.
 
 | Scope | GitHub Actions example | GitLab CI example |
 |---|---|---|
@@ -205,65 +122,65 @@ with `StringLike`, so `*` wildcards are supported. Start as narrow as your use c
 | Single repo, main branch | `repo:myorg/myrepo:ref:refs/heads/main` | `project_path:mygroup/myrepo:ref_type:branch:ref:main` |
 | Single repo, tags only | `repo:myorg/myrepo:ref:refs/tags/*` | `project_path:mygroup/myrepo:ref_type:tag:ref:*` |
 
-Providing multiple entries lets more than one project or branch assume the same role:
+Providing multiple list entries lets more than one project or branch assume the same role without opening access to
+the entire organisation.
 
-```hcl
-match_values = [
-  "repo:my-org/service-a:ref:refs/heads/main",
-  "repo:my-org/service-b:ref:refs/heads/main",
-]
-```
+> **Bitbucket users:** Bitbucket's `sub` claim uses UUIDs rather than human-readable names —
+> `{workspace-uuid}:{repo-uuid}:*` — so the patterns above do not apply directly. There is no name-based wildcard
+> that covers an entire workspace; you must supply the workspace UUID explicitly. To scope access to all repositories
+> in a workspace, use `{workspace-uuid}:*`; to target a single repository, supply both UUIDs. Find your workspace
+> UUID under **Workspace Settings → General** and your repository UUID under **Repository Settings → General** in
+> the Bitbucket UI.
 
-> **Bitbucket users:** Bitbucket's `sub` claim uses UUIDs rather than human-readable names.
-> There is no name-based wildcard that covers an entire workspace; you must supply the workspace
-> UUID explicitly. Find your workspace UUID under **Workspace Settings → General** and your
-> repository UUID under **Repository Settings → General**.
+## Security considerations
 
-## Design decisions
-
-**No policies attached.** Permission boundaries are use-case specific. A module that attaches
-policies would either be too permissive or too opinionated. Keeping the module policy-free makes
-it composable: callers attach exactly what their pipeline needs.
-
-**`sub` as the default `match_field`.** The subject claim is scoped to a specific
-repository/project and ref — the safest default. The audience claim (`aud`) is often shared
-across an entire organisation; matching on it grants access to every repo in that org.
-
-**Thumbprint fetched at apply time.** The TLS thumbprint for the OIDC provider endpoint is
-fetched dynamically via the `tls` provider rather than hardcoded. This keeps the module correct
-if the platform rotates its TLS certificate, with no module update required.
-
-**Conditional provider creation.** AWS enforces one OIDC provider per URL per account. Allowing
-callers to skip creation (`create_oidc_provider = false`) is what makes multiple module calls
-for the same platform viable in a single account.
+- **Prefer `sub` over `aud` for `match_field`.** The audience claim (`aud`) is often shared across an entire
+  organisation, so matching on it grants access to every repo in that org. The subject claim (`sub`) is job-scoped
+  and is the safer default.
+- **Avoid bare wildcards.** A `match_values` entry of `["*"]` would allow _any_ token issued by the platform to
+  assume the role. Always include at least the org or group prefix.
+- **Attach least-privilege policies.** This module creates the role without any permission policies. Attach only
+  the actions and resources your pipeline actually needs.
+- **One provider per account per URL.** AWS enforces uniqueness of OIDC provider URLs within an account. If a
+  provider for the platform already exists, set `create_oidc_provider = false` and pass its ARN via
+  `oidc_provider_arn` rather than creating a duplicate.
 
 ## Releasing
 
-Releases are driven by semantic version tags and triggered via GitHub Actions.
+Releases are driven by semantic version tags (`v*.*.*`) and must be triggered deliberately.
 
-1. Open a pull request — `validate` runs automatically as the merge gate.
+1. Open a pull request — the `validate` pipeline runs automatically as the merge gate.
 2. Merge to main once approved.
-3. Go to **Actions → Release → Run workflow → Branch: main** and select the bump type:
+3. Go to **Pipelines → Run pipeline → Branch: main → Pipeline: custom: release** and select the
+   appropriate bump type:
 
-| Type | When to use |
-|------|-------------|
+| Subcommand | When to use |
+|------------|-------------|
 | `patch` | Backwards-compatible bug fixes (default) |
 | `minor` | New backwards-compatible functionality |
 | `major` | Breaking changes |
 
-The workflow bumps the version tag, regenerates `README.md` if the docs are stale, and publishes
-a GitHub Release with auto-generated release notes. The first release always starts at `v1.0.0`.
+The pipeline calculates the next tag from the latest `v*.*.*` tag and pushes it to the
+repository. The first release always starts at `v1.0.0`.
 
-## Security considerations
+Before tagging, the pipeline automatically regenerates `README.md` via `terraform-docs`. If
+the file changed, a `docs: regenerate README` commit is pushed and the tag is created on that
+commit, so every release tag carries up-to-date documentation. To regenerate docs locally, run
+`make document`.
 
-- **Prefer `sub` over `aud` for `match_field`.** See [Design decisions](#design-decisions).
-- **Avoid bare wildcards.** A `match_values` entry of `["*"]` allows _any_ token issued by the
-  platform to assume the role. Always include at least the org or group prefix.
-- **Attach least-privilege policies.** Attach only the actions and resources your pipeline needs.
-- **One provider per account per URL.** If a provider already exists, use
-  `create_oidc_provider = false` rather than creating a duplicate.
-- **Temporary credentials expire in at most 1 hour.** AWS STS enforces this maximum on
-  `AssumeRoleWithWebIdentity`. Each job run must request a fresh token.
+## Required tools
+
+| Tool | Purpose |
+|------|---------|
+| [Terraform](https://developer.hashicorp.com/terraform/install) | Infrastructure as Code |
+| [terraform-docs](https://terraform-docs.io/user-guide/installation/) | README generation |
+| [TFLint](https://github.com/terraform-linters/tflint#installation) | Terraform linter |
+| [Checkov](https://www.checkov.io/2.Basics/Installing%20Checkov.html) | Security / policy scanning |
+| [Trivy](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) | Vulnerability / secret scanning |
+| [pre-commit](https://pre-commit.com/#installation) | Git hook manager |
+
+> Once all tools are installed, run `make setup` to initialise pre-commit hooks, TFLint plugins,
+> and the Terraform working directory.
 
 ## Requirements
 
@@ -278,6 +195,9 @@ a GitHub Release with auto-generated release notes. The first release always sta
 |------|---------|
 | <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.27 |
 | <a name="provider_tls"></a> [tls](#provider\_tls) | ~> 4.1 |
+## Modules
+
+No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
@@ -295,10 +215,4 @@ a GitHub Release with auto-generated release notes. The first release always sta
 | <a name="output_provider_arn"></a> [provider\_arn](#output\_provider\_arn) | The ARN of the OIDC identity provider. |
 | <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | The ARN of the IAM role created for OIDC federation. |
 | <a name="output_role_name"></a> [role\_name](#output\_role\_name) | The name of the IAM role created for OIDC federation. |
-## Resources
-
-| Name | Type |
-|------|------|
-| [aws_iam_openid_connect_provider.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_openid_connect_provider) | resource |
-| [aws_iam_role.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 <!-- END_TF_DOCS -->

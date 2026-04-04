@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - "*.tf"
-      - ".terraform-docs.yml"
+      - ".config/**"
 
 permissions:
   contents: write
@@ -19,11 +19,21 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      - name: Render terraform docs
-        uses: terraform-docs/gh-actions@v1
-        with:
-          working-dir: .
-          output-file: README.md
-          output-method: replace
-          git-push: "true"
-          git-commit-message: "docs: regenerate README"
+      - name: Install terraform-docs
+        run: |
+          curl -sSL -o /tmp/tf-docs.tar.gz \
+            "https://github.com/terraform-docs/terraform-docs/releases/download/v0.21.0/terraform-docs-v0.21.0-linux-amd64.tar.gz"
+          tar -xzf /tmp/tf-docs.tar.gz -C /usr/local/bin terraform-docs
+
+      - name: Regenerate README
+        run: make docs
+
+      - name: Push if changed
+        run: |
+          if ! git diff --quiet README.md; then
+            git config user.email "actions@github.com"
+            git config user.name "GitHub Actions"
+            git add README.md
+            git commit -m "docs: regenerate README"
+            git push
+          fi
