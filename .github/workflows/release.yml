@@ -1,22 +1,9 @@
-# Releases are intentional and must be triggered manually.
-# Workflow:
-#   1. Open a PR — the validate workflow runs automatically as the merge gate.
-#   2. Merge to main once approved.
-#   3. Trigger this workflow on main with the appropriate bump type.
 name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      release_type:
-        description: Release type
-        required: true
-        default: patch
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -28,12 +15,6 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure git
-        run: |
-          git config user.email "actions@github.com"
-          git config user.name "GitHub Actions"
 
       - name: Compute next version
         id: version
@@ -47,40 +28,15 @@ jobs:
             MAJOR=$(echo "$LATEST" | cut -d. -f1 | tr -d v)
             MINOR=$(echo "$LATEST" | cut -d. -f2)
             PATCH=$(echo "$LATEST" | cut -d. -f3)
-
-            case "${{ github.event.inputs.release_type }}" in
-              major) NEXT="v$((MAJOR+1)).0.0" ;;
-              minor) NEXT="v${MAJOR}.$((MINOR+1)).0" ;;
-              patch) NEXT="v${MAJOR}.${MINOR}.$((PATCH+1))" ;;
-            esac
+            NEXT="v${MAJOR}.${MINOR}.$((PATCH+1))"
           fi
 
           echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
-          echo "Next tag: $NEXT"
 
-      - name: Install terraform-docs
+      - name: Create release
         run: |
-          curl -sSL -o /tmp/tf-docs.tar.gz \
-            "https://github.com/terraform-docs/terraform-docs/releases/download/v0.21.0/terraform-docs-v0.21.0-linux-amd64.tar.gz"
-          tar -xzf /tmp/tf-docs.tar.gz -C /usr/local/bin terraform-docs
-
-      - name: Regenerate docs
-        run: |
-          make docs
-          if ! git diff --quiet README.md; then
-            git add README.md
-            git commit -m "docs: regenerate README"
-            git push
-          fi
-
-      - name: Tag and release
-        run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          git tag "$TAG"
-          git push origin "$TAG"
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --generate-notes \
-            --verify-tag
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

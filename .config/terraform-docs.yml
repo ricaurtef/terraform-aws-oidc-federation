@@ -166,29 +166,6 @@ content: |-
     provider for the platform already exists, set `create_oidc_provider = false` and pass its ARN via
     `oidc_provider_arn` rather than creating a duplicate.
 
-  ## Releasing
-
-  Releases are driven by semantic version tags (`v*.*.*`) and must be triggered deliberately.
-
-  1. Open a pull request — the `validate` pipeline runs automatically as the merge gate.
-  2. Merge to main once approved.
-  3. Go to **Pipelines → Run pipeline → Branch: main → Pipeline: custom: release** and select the
-     appropriate bump type:
-
-  | Subcommand | When to use |
-  |------------|-------------|
-  | `patch` | Backwards-compatible bug fixes (default) |
-  | `minor` | New backwards-compatible functionality |
-  | `major` | Breaking changes |
-
-  The pipeline calculates the next tag from the latest `v*.*.*` tag and pushes it to the
-  repository. The first release always starts at `v1.0.0`.
-
-  Before tagging, the pipeline automatically regenerates `README.md` via `terraform-docs`. If
-  the file changed, a `docs: regenerate README` commit is pushed and the tag is created on that
-  commit, so every release tag carries up-to-date documentation. To regenerate docs locally, run
-  `make document`.
-
   ## Required tools
 
   | Tool | Purpose |
