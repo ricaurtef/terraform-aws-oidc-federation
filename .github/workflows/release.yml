@@ -61,12 +61,12 @@ jobs:
       - name: Install terraform-docs
         run: |
           curl -sSL -o /tmp/tf-docs.tar.gz \
-            "https://github.com/terraform-docs/terraform-docs/releases/download/v0.20.0/terraform-docs-v0.20.0-linux-amd64.tar.gz"
+            "https://github.com/terraform-docs/terraform-docs/releases/download/v0.21.0/terraform-docs-v0.21.0-linux-amd64.tar.gz"
           tar -xzf /tmp/tf-docs.tar.gz -C /usr/local/bin terraform-docs
 
       - name: Regenerate docs
         run: |
-          terraform-docs .
+          make docs
           if ! git diff --quiet README.md; then
             git add README.md
             git commit -m "docs: regenerate README"

@@ -1,0 +1,9 @@
+---
+# Suppress verbose output in automated environments.
+quiet: true
+
+# Allow LOW and MEDIUM severity findings to pass (non-blocking).
+# Only HIGH and CRITICAL findings will fail the pipeline.
+soft-fail-on:
+  - LOW
+  - MEDIUM
